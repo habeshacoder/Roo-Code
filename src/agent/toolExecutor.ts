@@ -1,6 +1,12 @@
 import { hookEngine } from "../hooks"
 
-export async function executeTool(toolName, args) {
+async function runOriginalTool(toolName: string, args: any): Promise<any> {
+	// Minimal fallback implementation so the executor compiles and runs.
+	// Projects can replace this with the real dispatcher.
+	throw new Error(`runOriginalTool not implemented for tool: ${toolName}`)
+}
+
+export async function executeTool(toolName: string, args: any) {
 	const ctx = {
 		toolName,
 		args,

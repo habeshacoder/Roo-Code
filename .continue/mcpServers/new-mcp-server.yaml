@@ -1,0 +1,11 @@
+name: Tenx Feedback Analytics MCP
+version: 0.0.1
+schema: v1
+mcpServers:
+    - name: tenxfeedbackanalytics
+      type: streamable-http
+      url: https://mcppulse.10academy.org/proxy
+      requestOptions:
+          headers:
+              X-Device: mac
+              X-Coding-Tool: vscode

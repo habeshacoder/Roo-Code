@@ -5,5 +5,14 @@ export function getToolUseGuidelinesSection(): string {
 2. Choose the most appropriate tool based on the task and the tool descriptions provided. Assess if you need additional information to proceed, and which of the available tools would be most effective for gathering this information. For example using the list_files tool is more effective than running a command like \`ls\` in the terminal. It's critical that you think about each available tool and use the one that best fits the current step in the task.
 3. If multiple actions are needed, you may use multiple tools in a single message when appropriate, or use tools iteratively across messages. Each tool use should be informed by the results of previous tool uses. Do not assume the outcome of any tool use. Each step must be informed by the previous step's result.
 
+MANDATORY PROTOCOL FOR MUTATIONS:
+
+- Before calling any mutating tool (for example 'write_file', 'edit_file', 'create_directory', or 'move_file'), you MUST first call the 'select_active_intent(intent_id)' tool and wait for the returned '<intent_context>' before proceeding. The hook system enforces scope and stale-file checks and will reject writes that do not declare a valid active intent.
+
+Example:
+
+1) select_active_intent({ "intent_id": "INT-001" })
+2) wait for '<intent_context>' result
+3) write_file({ "path": "src/foo/bar.ts", "content": "...", "intent_id": "INT-001", "base_hash": "<hash>" })
 By carefully considering the user's response after tool executions, you can react accordingly and make informed decisions about how to proceed with the task. This iterative process helps ensure the overall success and accuracy of your work.`
 }

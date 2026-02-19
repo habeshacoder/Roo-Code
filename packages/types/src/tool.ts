@@ -46,6 +46,7 @@ export const toolNames = [
 	"skill",
 	"generate_image",
 	"custom_tool",
+	"select_active_intent", // Added for hook system integration
 ] as const
 
 export const toolNamesSchema = z.enum(toolNames)

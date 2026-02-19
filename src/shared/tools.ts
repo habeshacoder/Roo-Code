@@ -80,6 +80,9 @@ export const toolParamNames = [
 	// read_file legacy format parameter (backward compatibility)
 	"files",
 	"line_ranges",
+	// hook system parameters
+	"intent_id", // select_active_intent and write_file parameter for hook system
+	"base_hash", // write_file parameter for stale file prevention
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]
@@ -289,6 +292,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	skill: "load skill",
 	generate_image: "generate images",
 	custom_tool: "use custom tools",
+	select_active_intent: "select intent context",
 } as const
 
 // Define available tool groups.
@@ -316,6 +320,7 @@ export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
 export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"ask_followup_question",
 	"attempt_completion",
+	"select_active_intent",
 	"switch_mode",
 	"new_task",
 	"update_todo_list",

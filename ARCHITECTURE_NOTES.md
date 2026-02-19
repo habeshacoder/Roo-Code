@@ -19,7 +19,7 @@ Central interceptor wrapping all tools.
 Pre-Hooks:
 
 - Intent selection validation
-- Scope enforcement
+- Scope enforcement![alt text](<Intent-Based Orchestration-2026-02-19-100510.png>)
 - Optimistic locking
 
 Post-Hooks:

@@ -1,7 +1,6 @@
 import fs from "fs"
 import path from "path"
 import { hookEngine } from "../hooks"
-import { ClineProvider } from "../core/webview/ClineProvider"
 
 async function runOriginalTool(toolName: string, args: any): Promise<any> {
 	switch (toolName) {
@@ -26,21 +25,29 @@ async function runOriginalTool(toolName: string, args: any): Promise<any> {
 
 		case "use_mcp_tool": {
 			// Try to route to real MCP runner when running inside the extension host.
+			// Dynamic import prevents pulling `vscode` at module load time when running
+			// scripts outside the extension host (like test scripts).
+			if (process.env.SKIP_MCP_RUNNER === "1") {
+				throw new Error(`runOriginalTool not implemented for tool: ${toolName}`)
+			}
+
 			try {
+				const { ClineProvider } = await import("../core/webview/ClineProvider")
 				const provider = await ClineProvider.getInstance()
 				const mcpHub = provider?.getMcpHub()
 				if (mcpHub) {
-					const serverName = args.server_name || args.serverName
-					const toolNameArg = args.tool_name || args.toolName
-					const toolArgs = args.arguments || args.arguments || args.tool_arguments || undefined
+					const serverName = (args.server_name || args.serverName) as string | undefined
+					const toolNameArg = (args.tool_name || args.toolName) as string | undefined
+					const toolArgs = (args.arguments || args.tool_arguments) as Record<string, unknown> | undefined
 					if (!serverName || !toolNameArg) throw new Error("use_mcp_tool missing server_name/tool_name")
-					const res = await mcpHub.callTool(serverName, toolNameArg, toolArgs as Record<string, unknown>)
+					const res = await mcpHub.callTool(serverName, toolNameArg, toolArgs)
 					return res
 				}
 			} catch (err) {
 				// fallthrough to not-implemented fallback
 				console.warn("MCP runner not available, falling back:", err)
 			}
+
 			throw new Error(`runOriginalTool not implemented for tool: ${toolName}`)
 		}
 

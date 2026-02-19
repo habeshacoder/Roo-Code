@@ -1,0 +1,53 @@
+Overview
+
+Goal: Enforce an intent-first handshake so every mutating action is traceable and scoped to an intent.
+Key files: system.ts, tool-use-guidelines.ts, toolExecutor.ts, HookEngine.ts, IntentPreHook.ts, ScopeHook.ts, StaleHook.ts, TraceHook.ts, IntentStore.ts, active_intents.yaml, agent_trace.jsonl, TraceStore.ts.
+Flow (user prompt → final result)
+
+User prompt submitted
+
+User types a request in the UI (webview). The provider builds the system prompt using generateSystemPrompt.ts, which includes the SYSTEM_PROMPT rules (see system.ts) and tool-guidelines (tool-use-guidelines.ts). That prompt requires the agent to call select_active_intent before mutating files.
+Agent reasons and calls a tool
+
+The LLM/agent decides actions and issues a tool call (native tool schema) such as select_active_intent or later write_file / use_mcp_tool.
+Dispatcher / executor receives the tool call
+
+All tool calls go through executeTool(toolName, args) in toolExecutor.ts. This is the middleware entry-point.
+Pre-hooks run (security & context)
+
+HookEngine.runPre (HookEngine.ts) runs each hook in order:
+IntentPreHook (for select_active_intent): reads active_intents.yaml via IntentStore.ts, validates the intent id, and returns an <intent_context> XML. The executor injects this into the tool call result so the agent receives rich intent context.
+ScopeHook (for write_file): checks the intent's owned_scope against the target path (using minimatch). If path is outside scope, it blocks with a scope-violation error.
+StaleHook (for write_file): compares base_hash provided by the agent to the current disk SHA-256; if different, it blocks with a stale-file error (prevents overwrites).
+Any hook that returns allow: false causes executeTool to throw a standardized error back to the agent; the agent must handle it (HITL or re-run).
+Tool executes (original action)
+
+After Pre-hooks succeed, runOriginalTool executes the actual operation:
+write_file: writes content to disk (fs.writeFileSync) in the workspace path.
+use_mcp_tool: routed to the real MCP runner (McpHub.callTool) when available (via ClineProvider.getInstance()); otherwise falls back to a not-implemented error.
+read_file, etc. — return data as appropriate.
+Post-hooks run (audit & trace)
+
+After the tool completes, HookEngine.runPost runs:
+TraceHook for write_file: computes a content SHA-256, builds an agent-trace entry linking intent_id, relative_path, start/end lines, and content_hash, and appends it to agent_trace.jsonl using TraceStore.ts.
+(Other post hooks can record metadata, update intent_map.md or CLAUDE.md.)
+Agent receives result and continues
+
+The tool result (or error) returns to the agent/LLM. If allowed, the agent continues its plan; if blocked, it must handle the error (request scope expansion, re-select intent, rebase, or ask user).
+Error and governance behaviors
+
+Scope violation: ScopeHook blocks write_file with message like Scope violation: <path>. Agent must select a different intent or request scope changes.
+Stale file: StaleHook blocks with STALE_FILE so agents re-read and merge changes to avoid lost updates.
+Missing intent: IntentPreHook blocks select_active_intent if id invalid; the system prompt requires the agent to pick a valid intent first.
+MCP approval: Calls like use_mcp_tool include an askApproval/HITL step before execution (see UseMcpToolTool).
+Persistent artifacts
+
+active_intents.yaml — canonical intent list & scopes.
+agent_trace.jsonl — append-only ledger linking intents → file ranges → content_hash (for verification).
+intent_map.md & CLAUDE.md — spatial mapping and shared brain; updated by hooks/post-processing.
+Where to look and test
+
+Executor & hooks: toolExecutor.ts and hooks.
+Intent storage and trace append: IntentStore.ts and TraceStore.ts.
+System prompt & guidelines: system.ts and tool-use-guidelines.ts.
+Quick local test: run test-tool.ts (created) to simulate select_active_intent + write_file to a scoped path and inspect agent_trace.jsonl.

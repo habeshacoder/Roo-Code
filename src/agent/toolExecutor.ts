@@ -3,6 +3,7 @@ import path from "path"
 import { hookEngine } from "../hooks"
 
 async function runOriginalTool(toolName: string, args: any): Promise<any> {
+	console.debug(`[toolExecutor] runOriginalTool: ${toolName}`, args)
 	switch (toolName) {
 		case "select_active_intent":
 			// Return the injected intent context (XML) so callers receive it.
@@ -56,7 +57,24 @@ async function runOriginalTool(toolName: string, args: any): Promise<any> {
 	}
 }
 
+// track the currently active intent id chosen by the model.  This allows
+// later mutating tools to automatically inherit the intent even if the model
+// forgets to explicitly pass it again.  It also lets the hook system reject
+// writes when *no* intent has ever been selected (intent is required).  The
+// variable is kept in this module because executeTool is the central dispatcher
+// for all native tool calls.
+let activeIntentId: string | undefined
+
 export async function executeTool(toolName: string, args: any) {
+	// simple debug output so we can see exactly what tools are invoked
+	console.debug(`[toolExecutor] call: ${toolName}`, args)
+	// if the tool isn't the selection tool and we haven't been given an intent_id
+	// explicitly, propagate the current active intent automatically. this mirrors
+	// how the extension host would maintain a session-level active intent.
+	if (toolName !== "select_active_intent" && !args.intent_id && activeIntentId) {
+		args.intent_id = activeIntentId
+	}
+
 	const ctx = {
 		toolName,
 		args,
@@ -72,7 +90,15 @@ export async function executeTool(toolName: string, args: any) {
 
 	const result = await runOriginalTool(toolName, args)
 
+	// remember intent selection so subsequent calls inherit it
+	if (toolName === "select_active_intent" && args.intent_id) {
+		activeIntentId = args.intent_id
+	}
+
+	// let hooks observe post-call info (traces etc)
 	await hookEngine.runPost(ctx, result)
+
+	console.debug(`[toolExecutor] result: ${toolName}`, result)
 
 	return result
 }

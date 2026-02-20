@@ -17,5 +17,7 @@ describe("IntentPreHook", () => {
 
 		const res = await hook.pre({ toolName: "select_active_intent", args: { intent_id: "NOPE" } as any })
 		expect(res.allow).toBe(false)
+		// message should guide user to add an active intent
+		expect(res.message).toMatch(/active intent/i)
 	})
 })

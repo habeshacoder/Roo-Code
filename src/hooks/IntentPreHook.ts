@@ -6,7 +6,13 @@ export class IntentPreHook implements Hook {
 		if (ctx.toolName !== "select_active_intent") return { allow: true }
 
 		const intent = getIntent(ctx.args?.intent_id || ctx.intentId)
-		if (!intent) return { allow: false, message: "Invalid intent ID" }
+		if (!intent)
+			return {
+				allow: false,
+				message:
+					"No active intent found. Make sure .orchestration/active_intents.yaml\n" +
+					"contains an entry matching the provided intent_id.",
+			}
 
 		const xml = `
 <intent_context>

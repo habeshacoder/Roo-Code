@@ -38,6 +38,8 @@ describe("isToolAllowedForMode", () => {
 	it("allows always available tools", () => {
 		expect(isToolAllowedForMode("ask_followup_question", "markdown-editor", customModes)).toBe(true)
 		expect(isToolAllowedForMode("attempt_completion", "markdown-editor", customModes)).toBe(true)
+		// the intent-selection hook tool must never be disabled by mode filtering
+		expect(isToolAllowedForMode("select_active_intent", "markdown-editor", customModes)).toBe(true)
 	})
 
 	it("allows unrestricted tools", () => {

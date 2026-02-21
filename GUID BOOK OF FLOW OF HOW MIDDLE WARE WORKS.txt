@@ -51,3 +51,15 @@ Executor & hooks: toolExecutor.ts and hooks.
 Intent storage and trace append: IntentStore.ts and TraceStore.ts.
 System prompt & guidelines: system.ts and tool-use-guidelines.ts.
 Quick local test: run test-tool.ts (created) to simulate select_active_intent + write_file to a scoped path and inspect agent_trace.jsonl.
+
+
+
+Test script:
+Use these from the repo root:
+Only hook tests (IntentPreHook, ScopeHook, StaleHook, TraceHook):
+cd /Users/apple/projects/tenxAcadamy/Roo-Code/src && pnpm exec vitest run hooks/__tests__ --reporter=verbose
+Hooks + toolExecutor + orchestration:
+cd /Users/apple/projects/tenxAcadamy/Roo-Code/src && pnpm exec vitest run hooks/__tests__ agent/__tests__/toolExecutor.spec.ts .orchestration/__tests__ --reporter=verbose
+Via the package test script (runs all extension tests):
+cd /Users/apple/projects/tenxAcadamy/Roo-Code/src && pnpm test
+HookEngine is tested indirectly by the hook specs (e.g. IntentPreHook.spec.ts, ScopeHook.spec.ts, StaleHook.spec.ts, TraceHook.spec.ts), which use the engine built in src/hooks/index.ts. There is no separate HookEngine.spec.ts.

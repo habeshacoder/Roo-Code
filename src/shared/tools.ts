@@ -80,6 +80,10 @@ export const toolParamNames = [
 	// read_file legacy format parameter (backward compatibility)
 	"files",
 	"line_ranges",
+	// hook system parameters
+	"intent_id", // select_active_intent and write_to_file parameter for hook system
+	"base_hash", // write_to_file parameter for stale file prevention
+	"mutation_class", // write_to_file: AST_REFACTOR | INTENT_EVOLUTION
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]
@@ -114,7 +118,13 @@ export type NativeToolArgs = {
 	switch_mode: { mode_slug: string; reason: string }
 	update_todo_list: { todos: string }
 	use_mcp_tool: { server_name: string; tool_name: string; arguments?: Record<string, unknown> }
-	write_to_file: { path: string; content: string }
+	write_to_file: {
+		path: string
+		content: string
+		intent_id?: string
+		base_hash?: string
+		mutation_class?: "AST_REFACTOR" | "INTENT_EVOLUTION"
+	}
 	// Add more tools as they are migrated to native protocol
 }
 
@@ -194,7 +204,9 @@ export interface ReadFileToolUse extends ToolUse<"read_file"> {
 
 export interface WriteToFileToolUse extends ToolUse<"write_to_file"> {
 	name: "write_to_file"
-	params: Partial<Pick<Record<ToolParamName, string>, "path" | "content">>
+	params: Partial<
+		Pick<Record<ToolParamName, string>, "path" | "content" | "intent_id" | "base_hash" | "mutation_class">
+	>
 }
 
 export interface CodebaseSearchToolUse extends ToolUse<"codebase_search"> {
@@ -289,6 +301,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	skill: "load skill",
 	generate_image: "generate images",
 	custom_tool: "use custom tools",
+	select_active_intent: "select intent context",
 } as const
 
 // Define available tool groups.
@@ -316,6 +329,7 @@ export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
 export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"ask_followup_question",
 	"attempt_completion",
+	"select_active_intent",
 	"switch_mode",
 	"new_task",
 	"update_todo_list",

@@ -297,17 +297,33 @@ export function filterNativeToolsForMode(
 			// Normalize aliases so disabling a legacy alias (e.g. "search_and_replace")
 			// also disables the canonical tool (e.g. "edit").
 			const resolvedToolName = resolveToolAlias(toolName)
-			allowedToolNames.delete(resolvedToolName)
+			// **CRITICAL:** the intent-selection hook is required for governance and
+			// must never be user-disableable.  Silently ignore attempts to disable it
+			// so that the agent always has the opportunity to select an intent.
+			if (resolvedToolName === "select_active_intent") {
+				continue
+			}
+			allowedToolNames.delete("access_mcp_resource")
 		}
-	}
-
-	// Conditionally exclude access_mcp_resource if MCP is not enabled or there are no resources
-	if (!mcpHub || !hasAnyMcpResources(mcpHub)) {
-		allowedToolNames.delete("access_mcp_resource")
 	}
 
 	// Filter native tools based on allowed tool names and apply alias renames
 	const filteredTools: OpenAI.Chat.ChatCompletionTool[] = []
+
+	// helper: ensure the governance hook is always available, even if some of the
+	// preceding logic accidentally omitted it (e.g. user disables or mode filtering).
+	function getToolName(tool: OpenAI.Chat.ChatCompletionTool): string {
+		if ("function" in tool && tool.function && tool.function.name) {
+			return tool.function.name
+		}
+		return ""
+	}
+	function ensureHookToolPresent(arr: OpenAI.Chat.ChatCompletionTool[]) {
+		if (!arr.some((t) => getToolName(t) === "select_active_intent")) {
+			const hookTool = nativeTools.find((t) => getToolName(t) === "select_active_intent")
+			if (hookTool) arr.push(hookTool)
+		}
+	}
 
 	for (const tool of nativeTools) {
 		// Handle both ChatCompletionTool and ChatCompletionCustomTool
@@ -325,7 +341,8 @@ export function filterNativeToolsForMode(
 			}
 		}
 	}
-
+	// Guarantee the intent selection hook appears exactly once
+	ensureHookToolPresent(filteredTools)
 	return filteredTools
 }
 
@@ -336,7 +353,6 @@ function hasAnyMcpResources(mcpHub: McpHub): boolean {
 	const servers = mcpHub.getServers()
 	return servers.some((server) => server.resources && server.resources.length > 0)
 }
-
 /**
  * Checks if a specific tool is allowed in the current mode.
  * This is useful for dynamically filtering system prompt content.

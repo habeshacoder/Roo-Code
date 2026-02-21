@@ -15,6 +15,10 @@ const PATH_PARAMETER_DESCRIPTION = `The path of the file to write to (relative t
 
 const CONTENT_PARAMETER_DESCRIPTION = `The content to write to the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified. Do NOT include line numbers in the content.`
 
+const INTENT_ID_DESCRIPTION = `The active intent ID from select_active_intent (e.g. INT-001). Required for governed mode; the hook system will reject writes without a valid intent_id.`
+const BASE_HASH_DESCRIPTION = `SHA-256 hex hash of the file content as it was when you read it. Used for optimistic locking; if the file changed on disk, the write will be rejected with STALE_FILE. Omit for new files.`
+const MUTATION_CLASS_DESCRIPTION = `Semantic classification: "AST_REFACTOR" (syntax/structure change, same intent) or "INTENT_EVOLUTION" (new feature/behavior). Defaults to INTENT_EVOLUTION if omitted.`
+
 export default {
 	type: "function",
 	function: {
@@ -31,6 +35,19 @@ export default {
 				content: {
 					type: "string",
 					description: CONTENT_PARAMETER_DESCRIPTION,
+				},
+				intent_id: {
+					type: "string",
+					description: INTENT_ID_DESCRIPTION,
+				},
+				base_hash: {
+					type: "string",
+					description: BASE_HASH_DESCRIPTION,
+				},
+				mutation_class: {
+					type: "string",
+					enum: ["AST_REFACTOR", "INTENT_EVOLUTION"],
+					description: MUTATION_CLASS_DESCRIPTION,
 				},
 			},
 			required: ["path", "content"],

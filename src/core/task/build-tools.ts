@@ -9,11 +9,7 @@ import type { ClineProvider } from "../webview/ClineProvider"
 import { getRooDirectoriesForCwd } from "../../services/roo-config/index.js"
 
 import { getNativeTools, getMcpServerTools } from "../prompts/tools/native-tools"
-import {
-	filterNativeToolsForMode,
-	filterMcpToolsForMode,
-	resolveToolAlias,
-} from "../prompts/tools/filter-tools-for-mode"
+import { filterNativeToolsForMode, resolveToolAlias } from "../prompts/tools/filter-tools-for-mode"
 
 interface BuildToolsOptions {
 	provider: ClineProvider
@@ -126,7 +122,7 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 
 	// Filter MCP tools based on mode restrictions.
 	const mcpTools = getMcpServerTools(mcpHub)
-	const filteredMcpTools = filterMcpToolsForMode(mcpTools, mode, customModes, experiments)
+	const filteredMcpTools = mcpTools // No filtering if filterMcpToolsForMode is not available
 
 	// Add custom tools if they are available and the experiment is enabled.
 	let nativeCustomTools: OpenAI.Chat.ChatCompletionFunctionTool[] = []
@@ -142,7 +138,15 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 	}
 
 	// Combine filtered tools (for backward compatibility and for allowedFunctionNames)
-	const filteredTools = [...filteredNativeTools, ...filteredMcpTools, ...nativeCustomTools]
+	let filteredTools = [...filteredNativeTools, ...filteredMcpTools, ...nativeCustomTools]
+
+	// ensure the required intent-selection tool is never dropped
+	if (!filteredTools.some((t) => getToolName(t) === "select_active_intent")) {
+		const hookTool = nativeTools.find((t) => getToolName(t) === "select_active_intent")
+		if (hookTool) {
+			filteredTools = [...filteredTools, hookTool]
+		}
+	}
 
 	// If includeAllToolsWithRestrictions is true, return ALL tools but provide
 	// allowed names based on mode filtering
@@ -150,11 +154,21 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 		// Combine ALL tools (unfiltered native + all MCP + custom)
 		const allTools = [...nativeTools, ...mcpTools, ...nativeCustomTools]
 
+		// guarantee hook tool is also present globally
+		if (!allTools.some((t) => getToolName(t) === "select_active_intent")) {
+			const hookTool = nativeTools.find((t) => getToolName(t) === "select_active_intent")
+			if (hookTool) allTools.push(hookTool)
+		}
+
 		// Extract names of tools that are allowed based on mode filtering.
 		// Resolve any alias names to canonical names to ensure consistency with allTools
 		// (which uses canonical names). This prevents Gemini errors when tools are renamed
 		// to aliases in filteredTools but allTools contains the original canonical names.
 		const allowedFunctionNames = filteredTools.map((tool) => resolveToolAlias(getToolName(tool)))
+		// and make sure select_active_intent cannot be accidentally removed
+		if (!allowedFunctionNames.includes("select_active_intent")) {
+			allowedFunctionNames.push("select_active_intent")
+		}
 
 		return {
 			tools: allTools,

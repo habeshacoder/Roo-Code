@@ -111,6 +111,9 @@ export abstract class BaseTool<TName extends ToolName> {
 	 * @param callbacks - Tool execution callbacks
 	 */
 	async handle(task: Task, block: ToolUse<TName>, callbacks: ToolCallbacks): Promise<void> {
+		console.log(
+			`[custom-log][BaseTool][handle] START - tool=${this.name}, taskId=${task.taskId}, partial=${block.partial}`,
+		)
 		// Handle partial messages
 		if (block.partial) {
 			try {
@@ -122,6 +125,7 @@ export abstract class BaseTool<TName extends ToolName> {
 					error instanceof Error ? error : new Error(String(error)),
 				)
 			}
+			console.log(`[custom-log][BaseTool][handle] END (partial handled) - tool=${this.name}`)
 			return
 		}
 
@@ -131,6 +135,7 @@ export abstract class BaseTool<TName extends ToolName> {
 			if (block.nativeArgs !== undefined) {
 				// Native: typed args provided by NativeToolCallParser.
 				params = block.nativeArgs as ToolParams<TName>
+				console.log(`[custom-log][BaseTool][handle] Parsed nativeArgs for ${this.name}:`, params)
 			} else {
 				// If legacy/XML markup was provided via params, surface a clear error.
 				const paramsText = (() => {
@@ -153,10 +158,13 @@ export abstract class BaseTool<TName extends ToolName> {
 			await callbacks.handleError(`parsing ${this.name} args`, new Error(errorMessage))
 			// Note: handleError already emits a tool_result via formatResponse.toolError in the caller.
 			// Do NOT call pushToolResult here to avoid duplicate tool_result payloads.
+			console.log(`[custom-log][BaseTool][handle] END (parse error) - tool=${this.name}`)
 			return
 		}
 
+		console.log(`[custom-log][BaseTool][handle] Calling execute() for ${this.name}`)
 		// Execute with typed parameters
 		await this.execute(params, task, callbacks)
+		console.log(`[custom-log][BaseTool][handle] END (execute returned) - tool=${this.name}`)
 	}
 }

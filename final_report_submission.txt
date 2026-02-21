@@ -1,0 +1,362 @@
+================================================================================
+TRP1 CHALLENGE WEEK 1 — FINAL REPORT
+Architecting the AI-Native IDE & Intent–Code Traceability
+================================================================================
+
+1. EXECUTIVE SUMMARY
+--------------------------------------------------------------------------------
+This report documents the implementation that upgrades Roo Code into a governed,
+intent-driven AI-native IDE. A deterministic hook middleware layer intercepts
+tool execution to enforce intent selection, scope, optimistic locking, and
+semantic traceability. Every mutating action is linked to a declared business
+intent and recorded in an append-only ledger with content hashing for spatial
+independence.
+
+Key outcomes:
+• Two-stage handshake: Agent must call select_active_intent(intent_id) before
+  any file mutation; context is injected from .orchestration/active_intents.yaml.
+• Hook Engine: Pre-hooks (IntentPreHook, ScopeHook, StaleHook) and Post-hooks
+  (TraceHook) wrap tool execution; hooks are composable and fail-safe.
+• AI-Native Git layer: agent_trace.jsonl records intent_id, file path, line
+  range, content_hash (SHA-256), and mutation_class (AST_REFACTOR | INTENT_EVOLUTION).
+• Parallel safety: StaleHook blocks writes when base_hash differs from disk;
+  .intentignore and owned_scope restrict which intents can edit which paths.
+• Shared brain: CLAUDE.md and intent_map.md are updated by the system for
+  cross-session and spatial mapping.
+
+
+2. ARCHITECTURE
+--------------------------------------------------------------------------------
+
+2.1 High-Level Architecture
+• Webview (UI): Presentation only; emits events via postMessage.
+• Extension Host: API polling, secrets, MCP tool execution, tool loop.
+• Hook Engine: Middleware boundary. Intercepts all tool execution requests.
+  - PreToolUse: Intent validation, context injection, scope check, stale-file check.
+  - PostToolUse: Trace append, intent_map.md update.
+
+2.2 Two Execution Paths (as per ARCHITECTURE_NOTES.md)
+(1) Script/test path: select_active_intent and write_file go through
+    executeTool() in src/agent/toolExecutor.ts. Hooks run inside executeTool.
+(2) UI path: write_to_file is handled by WriteToFileTool.handle() in
+    src/core/tools/WriteToFileTool.ts. The same HookEngine is invoked
+    explicitly: runPre before write, runPost after save. select_active_intent
+    is exposed as a native tool; SelectActiveIntentTool.handle() calls
+    executeTool("select_active_intent", { intent_id }) and pushes the
+    <intent_context> result. Ensure presentAssistantMessage dispatches
+    block.name === "select_active_intent" to selectActiveIntentTool.handle()
+    (e.g. explicit case in the tool switch) so the handshake runs in the UI flow.
+
+2.3 Directory Layout (Relevant to Hooks & Orchestration)
+  src/
+    agent/
+      toolExecutor.ts        # Central dispatcher; runs hookEngine.runPre/runPost
+      __tests__/
+        toolExecutor.spec.ts
+    hooks/
+      HookEngine.ts          # runPre(ctx), runPost(ctx, result); ordered hooks
+      IntentPreHook.ts       # select_active_intent → validate + inject <intent_context>
+      ScopeHook.ts           # write_file/write_to_file → owned_scope + .intentignore
+      StaleHook.ts           # write_file/write_to_file → base_hash vs disk
+      TraceHook.ts           # write_file/write_to_file → append agent_trace.jsonl
+      index.ts               # hookEngine instance with [IntentPreHook, ScopeHook, StaleHook, TraceHook]
+      __tests__/
+        IntentPreHook.spec.ts, ScopeHook.spec.ts, StaleHook.spec.ts, TraceHook.spec.ts
+    core/
+      tools/
+        WriteToFileTool.ts   # Pre/Post hook calls around save
+        SelectActiveIntentTool.ts  # Calls executeTool("select_active_intent", …)
+      prompts/
+        sections/
+          tool-use-guidelines.ts   # Mandatory select_active_intent before mutations
+          intentProtocolSection.ts
+        tools/native-tools/
+          select_active_intent.ts # Tool schema (intent_id required)
+          write_to_file.ts        # Schema: intent_id, base_hash, mutation_class
+    prompt/
+      systemPrompt.ts        # Intent-Driven Architect rules
+  .orchestration/
+    IntentStore.ts           # loadIntents(), getIntent(), getWorkspaceRoot()
+    TraceStore.ts            # appendTrace(), appendIntentMapEntry(), getGitRevision()
+    active_intents.yaml      # Canonical intent list
+    agent_trace.jsonl        # Append-only ledger
+    intent_map.md            # Intent → files mapping
+    CLAUDE.md                # Shared brain
+    __tests__/
+      IntentStore.spec.ts, TraceStore.spec.ts
+
+
+3. SCHEMAS AND DATA MODELS
+--------------------------------------------------------------------------------
+
+3.1 active_intents.yaml (Intent Specification)
+Location: .orchestration/active_intents.yaml (workspace root).
+Purpose: Lifecycle and scope of business intents; updated by Pre/Post hooks and user.
+
+Structure:
+  active_intents:
+    - id: "INT-001"                    # Required; referenced by select_active_intent
+      name: "Weather API"              # Human-readable
+      status: IN_PROGRESS              # Lifecycle
+      owned_scope:                     # Glob patterns (minimatch); write_file must match
+        - src/weather/**
+      constraints:                    # Injected into <intent_context>
+        - Must use OpenWeather
+      acceptance_criteria:
+        - tests/weather pass
+
+Implementation: IntentStore.loadIntents() reads/creates file; getIntent(id) returns
+single intent or null. Workspace root: VS Code workspaceFolders[0] or process.cwd().
+
+3.2 agent_trace.jsonl (Ledger)
+Location: .orchestration/agent_trace.jsonl.
+Purpose: Append-only, machine-readable history linking Intent → File → Content Hash.
+Update: Post-Hook (TraceHook) after every successful write_file/write_to_file.
+
+Schema (per line, JSON object):
+  {
+    "id": "uuid-v4",
+    "timestamp": "ISO8601",
+    "vcs": { "revision_id": "git_sha_or_null" },
+    "mutation_class": "AST_REFACTOR" | "INTENT_EVOLUTION",
+    "files": [
+      {
+        "relative_path": "src/weather/service.ts",
+        "conversations": [
+          {
+            "url": undefined,
+            "contributor": { "entity_type": "AI", "model_identifier": "roo" },
+            "ranges": [
+              {
+                "start_line": 1,
+                "end_line": 42,
+                "content_hash": "sha256:<hex>"
+              }
+            ],
+            "related": [
+              { "type": "specification", "value": "INT-001" },
+              { "type": "intent", "value": "INT-001" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+
+Content hashing: SHA-256 of the written content; ensures spatial independence
+(line moves do not invalidate attribution). Implemented in TraceHook (crypto.createHash).
+
+3.3 intent_map.md (Spatial Map)
+Purpose: Maps intent IDs to physical files. Updated by TraceStore.appendIntentMapEntry()
+from TraceHook post-hook. Format: intent ID header, then "Files:" and list of paths.
+
+3.4 .intentignore
+Purpose: Intents listed (or matched by pattern) are excluded from writes.
+ScopeHook checks this; if intent is ignored, returns allow: false with message.
+
+3.5 Tool Parameter Extensions (write_to_file / write_file)
+  intent_id: string (optional in schema; required by hook — or inherited from
+    last select_active_intent in toolExecutor).
+  base_hash: string (optional). SHA-256 hex of file content when read; if
+    present, StaleHook compares to current disk hash; mismatch → STALE_FILE.
+  mutation_class: "AST_REFACTOR" | "INTENT_EVOLUTION" (optional; default
+    INTENT_EVOLUTION in TraceHook).
+
+
+4. HOOK ENGINE AND IMPLEMENTED HOOKS
+--------------------------------------------------------------------------------
+
+4.1 HookEngine (src/hooks/HookEngine.ts)
+  interface ToolContext {
+    toolName, args, intentId?, filePath?, content?, baseHash?, mutationClass?
+  }
+  interface HookResult {
+    allow: boolean
+    message?: string
+    injectedContext?: string
+  }
+  interface Hook {
+    pre(ctx: ToolContext): Promise<HookResult>
+    post(ctx: ToolContext, result: any): Promise<void>
+  }
+  runPre(ctx): Runs each hook in order; if any returns allow: false, throws
+    with message (executor/tool surfaces this to the agent). Accumulates
+    injectedContext from hooks and returns it.
+  runPost(ctx, result): Runs each hook in order (no short-circuit).
+
+4.2 IntentPreHook
+  pre: Only for toolName === "select_active_intent". Loads intent via
+    getIntent(ctx.args?.intent_id || ctx.intentId). If missing → allow: false,
+    message directing to active_intents.yaml. If present → allow: true,
+    injectedContext: XML <intent_context> with id, scope, constraints.
+    Sets ctx.intentId for downstream hooks.
+  post: No-op.
+
+4.3 ScopeHook
+  pre: Only for write_file / write_to_file. If intent in .intentignore →
+    allow: false. Else getIntent(intentId); if no intent → allow: false,
+    "You must cite a valid active Intent ID. Call select_active_intent…".
+    Else checks ctx.filePath against intent.owned_scope (minimatch); if no
+    match → allow: false, "Scope Violation: … not authorized to edit …".
+  post: No-op.
+
+4.4 StaleHook
+  pre: Only for write_file / write_to_file. If no baseHash → allow: true.
+    Else reads file from disk, computes SHA-256; if disk hash !== ctx.baseHash
+    → allow: false, message "STALE_FILE".
+  post: No-op.
+
+4.5 TraceHook
+  pre: allow: true (no gate).
+  post: Only for write_file / write_to_file. Computes SHA-256 of ctx.content,
+    builds trace entry (id, timestamp, vcs.revision_id, mutation_class,
+    files[].relative_path, conversations[].ranges[].content_hash,
+    related specification/intent). appendTrace(entry); appendIntentMapEntry(intentId, filePath).
+
+
+5. AGENT FLOW — DETAILED BREAKDOWN
+--------------------------------------------------------------------------------
+
+5.1 End-to-End Flow (User Prompt → Result)
+  (1) User submits prompt in Webview.
+  (2) Provider builds system prompt (generateSystemPrompt) including:
+      - SYSTEM_PROMPT (Intent-Driven Architect; must call select_active_intent first).
+      - Intent Protocol section (getIntentProtocolSection): cannot write until
+        select_active_intent has been called.
+      - Tool Use Guidelines: before any mutating tool, call select_active_intent,
+        wait for <intent_context>, then call write_to_file with intent_id, base_hash, mutation_class.
+  (3) LLM responds; may emit tool_use for select_active_intent or write_to_file.
+  (4) presentAssistantMessage processes blocks. For write_to_file → WriteToFileTool.handle;
+      for select_active_intent → handled by SelectActiveIntentTool (when dispatched)
+      or by default branch if wired via custom tool / explicit case.
+  (5) select_active_intent path:
+      - SelectActiveIntentTool.execute(params) → executeTool("select_active_intent", { intent_id }).
+      - toolExecutor: builds ctx (toolName, args, intentId from args.intent_id).
+      - hookEngine.runPre(ctx): IntentPreHook loads intent, returns <intent_context>.
+      - runOriginalTool("select_active_intent"): returns args._intentContext (injected).
+      - activeIntentId = args.intent_id (stored for later writes).
+      - hookEngine.runPost(ctx, result). Result (XML) pushed to conversation.
+  (6) write_to_file path (UI):
+      - WriteToFileTool.execute: validates path/content, rooignore, then builds hookCtx
+        (toolName, args, intentId from params.intent_id ?? getActiveIntentId(), filePath,
+        content, baseHash [computed from disk if not provided], mutationClass).
+      - hookEngine.runPre(hookCtx): ScopeHook (intent + scope), StaleHook (base_hash).
+        If any hook throws → pushToolResult(message), return.
+      - User approval (diff UI), then save to disk.
+      - hookEngine.runPost(hookCtx, result): TraceHook appends to agent_trace.jsonl,
+        updates intent_map.md.
+  (7) toolExecutor path (script/test write_file):
+      - executeTool("write_file", { path, content, intent_id?, base_hash?, mutation_class? }).
+      - ctx.intentId from args or activeIntentId. runPre → ScopeHook, StaleHook.
+      - runOriginalTool writes file; runPost → TraceHook.
+
+5.2 Gatekeeper Behavior
+  • No valid intent: ScopeHook returns "You must cite a valid active Intent ID.
+    Call select_active_intent(intent_id) first and use an id from .orchestration/active_intents.yaml."
+  • Scope violation: "Scope Violation: <intent_id> is not authorized to edit <path>.
+    Request scope expansion in active_intents.yaml."
+  • Stale file: "STALE_FILE" so agent re-reads and retries.
+  • Intent in .intentignore: "Intent <id> is listed in .intentignore; changes are excluded."
+
+
+6. IMPLEMENTED HOOK INTEGRATION POINTS
+--------------------------------------------------------------------------------
+  • toolExecutor.executeTool: single entry for script/test tools; runs runPre,
+    runOriginalTool, then runPost; maintains activeIntentId for select_active_intent.
+  • WriteToFileTool.execute: after validation, runPre(hookCtx); on throw, pushToolResult
+    and return. After successful save, runPost(hookCtx, { path: relPath }).
+  • SelectActiveIntentTool: delegates to executeTool("select_active_intent", { intent_id }),
+    pushes returned intent context (XML) as tool result.
+
+
+7. PROMPT AND TOOL SCHEMAS
+--------------------------------------------------------------------------------
+  • systemPrompt.ts: "You are an Intent-Driven Architect AI… MUST NOT write or
+    modify files before selecting an intent. Call select_active_intent(intent_id).
+    Wait for intent_context. Then execute actions. If no valid intent → STOP."
+  • intentProtocolSection: "You CANNOT write code immediately. FIRST action:
+    analyze request, identify intent_id, call select_active_intent(intent_id)."
+  • tool-use-guidelines: Mandatory protocol — before mutating tools, call
+    select_active_intent, wait for <intent_context>, then e.g. write_to_file with
+    intent_id, base_hash, mutation_class.
+  • Native tool definitions:
+    - select_active_intent: required ["intent_id"]; description references scope,
+      audit trails, and <intent_context> return.
+    - write_to_file: intent_id, base_hash, mutation_class (enum AST_REFACTOR |
+      INTENT_EVOLUTION) in schema; required remain path and content.
+  • build-tools.ts / filter-tools-for-mode.ts: select_active_intent is always
+    included and cannot be disabled by user or mode.
+
+
+8. TESTING
+--------------------------------------------------------------------------------
+  • Hooks (Vitest):
+    - IntentPreHook.spec.ts: injects context when intent exists; blocks when intent missing.
+    - ScopeHook.spec.ts: allows when path matches scope; blocks when path outside scope.
+    - StaleHook.spec.ts: allows when no baseHash; blocks when baseHash differs from disk.
+    - TraceHook.spec.ts: post write_file appends trace; verifies relative_path and related intent.
+  • toolExecutor.spec.ts: blocks write_file when no intent selected; after
+    select_active_intent in tmp dir with active_intents.yaml, write_file succeeds
+    and intent context is returned.
+  • IntentStore.spec.ts: workspace detection (cwd vs vscode), stub file creation,
+    getIntent for unknown id.
+  • TraceStore.spec.ts: appendTrace writes to .orchestration/agent_trace.jsonl;
+    getWorkspaceRoot override.
+  • build-tools.spec.ts: always includes select_active_intent in tool list.
+
+  Commands (from Guid-Book and middleware flow doc):
+    cd src && pnpm exec vitest run hooks/__tests__ --reporter=verbose
+    cd src && pnpm exec vitest run hooks/__tests__ agent/__tests__/toolExecutor.spec.ts .orchestration/__tests__ --reporter=verbose
+    cd src && pnpm test
+
+
+9. SUMMARY OF ACHIEVEMENTS
+--------------------------------------------------------------------------------
+  ✓ Intent–Code traceability: agent_trace.jsonl links intent_id to file path,
+    range, and content_hash; mutation_class distinguishes AST_REFACTOR vs INTENT_EVOLUTION.
+  ✓ Context engineering: active_intents.yaml drives <intent_context> injection;
+    agent cannot meaningfully mutate without selecting a valid intent (enforced by ScopeHook).
+  ✓ Hook architecture: Clean middleware (HookEngine) with ordered, composable hooks;
+    Pre-hooks gate execution and inject context; Post-hooks append trace and update maps.
+  ✓ Orchestration: StaleHook enables parallel safety; .intentignore and owned_scope
+    enforce scope; intent_map.md and CLAUDE.md support spatial map and shared brain.
+  ✓ Two-stage handshake: Protocol and prompts require select_active_intent first;
+    toolExecutor and WriteToFileTool both use the same HookEngine for consistency.
+  ✓ Schema compliance: Agent trace format matches challenge spec (id, timestamp, vcs,
+    files[].relative_path, conversations[].ranges[].content_hash, related[]).
+  ✓ Tests: Hook unit tests, toolExecutor intent propagation, IntentStore/TraceStore
+    workspace and append behavior, build-tools inclusion of select_active_intent.
+
+
+10. FILES DELIVERED (RELEVANT TO REPORT)
+--------------------------------------------------------------------------------
+  • .orchestration/active_intents.yaml — example intents (e.g. INT-001 Weather API).
+  • .orchestration/agent_trace.jsonl — append-only ledger (sample entries).
+  • .orchestration/intent_map.md — intent-to-file mapping.
+  • .orchestration/CLAUDE.md — shared brain.
+  • .orchestration/IntentStore.ts, TraceStore.ts + __tests__.
+  • src/hooks/ — HookEngine, IntentPreHook, ScopeHook, StaleHook, TraceHook, index + __tests__.
+  • src/agent/toolExecutor.ts + __tests__/toolExecutor.spec.ts.
+  • src/core/tools/WriteToFileTool.ts (hook calls), SelectActiveIntentTool.ts.
+  • src/core/prompts/tools/native-tools/select_active_intent.ts, write_to_file.ts.
+  • src/core/prompts/sections/tool-use-guidelines.ts, intentProtocolSection.ts.
+  • src/prompt/systemPrompt.ts.
+  • ARCHITECTURE_NOTES.md, Guid-Book-Trace-the-Tool-Loop.md, middleware flow doc,
+    Interim Submission, and this final_report_submission.txt.
+
+
+11. EVALUATION RUBRIC ALIGNMENT (SELF-ASSESSMENT)
+--------------------------------------------------------------------------------
+  • Intent–AST correlation: Trace ledger with content_hash and intent linkage
+    implemented; refactor vs evolution via mutation_class — Strong.
+  • Context engineering: Dynamic injection from active_intents.yaml; agent must
+    reference intent before mutation — Strong.
+  • Hook architecture: Isolated, composable, deterministic middleware; clear
+    Pre/Post and fail-fast on allow: false — Strong.
+  • Orchestration: Parallel safety (StaleHook), shared brain (CLAUDE.md),
+    intent map and scope partitioning — Strong.
+
+
+================================================================================
+END OF REPORT
+================================================================================

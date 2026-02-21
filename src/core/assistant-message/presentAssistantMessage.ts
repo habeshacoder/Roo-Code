@@ -63,8 +63,13 @@ export async function presentAssistantMessage(cline: Task) {
 		throw new Error(`[Task#presentAssistantMessage] task ${cline.taskId}.${cline.instanceId} aborted`)
 	}
 
+	console.log(
+		`[custom-log][presentAssistantMessage] START - taskId=${cline.taskId}, locked=${cline.presentAssistantMessageLocked}`,
+	)
+
 	if (cline.presentAssistantMessageLocked) {
 		cline.presentAssistantMessageHasPendingUpdates = true
+		console.log(`[custom-log][presentAssistantMessage] Already locked, setting pending updates`)
 		return
 	}
 
@@ -81,8 +86,13 @@ export async function presentAssistantMessage(cline: Task) {
 		}
 
 		cline.presentAssistantMessageLocked = false
+		console.log(`[custom-log][presentAssistantMessage] END (out of bounds) - releasing lock`)
 		return
 	}
+
+	console.log(
+		`[custom-log][presentAssistantMessage] Processing block index=${cline.currentStreamingContentIndex}, total=${cline.assistantMessageContent.length}`,
+	)
 
 	let block: any
 	try {
@@ -100,6 +110,10 @@ export async function presentAssistantMessage(cline: Task) {
 		cline.presentAssistantMessageLocked = false
 		return
 	}
+
+	console.log(
+		`[custom-log][presentAssistantMessage] Block type=${block.type}, name=${block.name}, partial=${block.partial}`,
+	)
 
 	switch (block.type) {
 		case "mcp_tool_use": {
@@ -675,6 +689,7 @@ export async function presentAssistantMessage(cline: Task) {
 				}
 			}
 
+			console.log(`[custom-log][presentAssistantMessage] About to dispatch to tool handler: name=${block.name}`)
 			switch (block.name) {
 				case "write_to_file":
 					await checkpointSaveAndMark(cline)
@@ -982,12 +997,18 @@ export async function presentAssistantMessage(cline: Task) {
  * @returns
  */
 async function checkpointSaveAndMark(task: Task) {
+	console.log(
+		`[custom-log][presentAssistantMessage][checkpointSaveAndMark] taskId=${task.taskId}, currentStreamingDidCheckpoint=${task.currentStreamingDidCheckpoint}`,
+	)
 	if (task.currentStreamingDidCheckpoint) {
+		console.log(`[custom-log][presentAssistantMessage][checkpointSaveAndMark] Already checkpointed, skipping`)
 		return
 	}
 	try {
+		console.log(`[custom-log][presentAssistantMessage][checkpointSaveAndMark] Calling task.checkpointSave(true)`)
 		await task.checkpointSave(true)
 		task.currentStreamingDidCheckpoint = true
+		console.log(`[custom-log][presentAssistantMessage][checkpointSaveAndMark] Checkpoint saved successfully`)
 	} catch (error) {
 		console.error(`[Task#presentAssistantMessage] Error saving checkpoint: ${error.message}`, error)
 	}

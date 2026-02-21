@@ -30,10 +30,9 @@ export function getWorkspaceRoot(): string {
 function findPath() {
 	// recompute each call so tests can override cwd/vscode mocks
 	const root = getWorkspaceRoot()
-	const candidates = [
-		path.join(root, ".orchestration/agent_trace.jsonl"),
-		path.join(root, "src/.orchestration/agent_trace.jsonl"),
-	]
+	// Only use root-level .orchestration folder (moved from src/)
+	const candidates = [path.join(root, ".orchestration/agent_trace.jsonl")]
+	// Find first candidate whose parent directory exists, or fall back to first candidate
 	return candidates.find((p) => fs.existsSync(path.dirname(p))) || candidates[0]
 }
 

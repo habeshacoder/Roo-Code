@@ -49,7 +49,10 @@ export const generateSystemPrompt = async (provider: ClineProvider, message: Web
 		customModePrompts,
 		customModes,
 		customInstructions,
-		experiments,
+		{
+			...experiments,
+			intentProtocol: true,
+		},
 		language,
 		rooIgnoreInstructions,
 		{

@@ -1,5 +1,5 @@
 import { Hook, ToolContext, HookResult } from "./HookEngine"
-import { getIntent } from "../.orchestration/IntentStore"
+import { getIntent } from "../../.orchestration/IntentStore"
 
 export class IntentPreHook implements Hook {
 	async pre(ctx: ToolContext): Promise<HookResult> {

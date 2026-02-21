@@ -1,5 +1,5 @@
 import { IntentPreHook } from "../IntentPreHook"
-import * as IntentStore from "../../.orchestration/IntentStore"
+import * as IntentStore from "../../../.orchestration/IntentStore"
 
 describe("IntentPreHook", () => {
 	it("injects intent context when intent exists", async () => {

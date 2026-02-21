@@ -38,10 +38,8 @@ function findPath() {
 	// compute candidates each time so that tests can alter process.cwd or
 	// mock vscode and have the change take effect.
 	const root = getWorkspaceRoot()
-	const candidates = [
-		path.join(root, ".orchestration/active_intents.yaml"),
-		path.join(root, "src/.orchestration/active_intents.yaml"),
-	]
+	// Only use root-level .orchestration folder (moved from src/)
+	const candidates = [path.join(root, ".orchestration/active_intents.yaml")]
 
 	// Prefer a candidate that exists and is non-empty (workspace-root may be empty placeholder).
 	for (const p of candidates) {

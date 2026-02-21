@@ -1,6 +1,6 @@
 import crypto from "crypto"
 import { Hook, ToolContext, HookResult } from "./HookEngine"
-import { appendTrace } from "../.orchestration/TraceStore"
+import { appendTrace } from "../../.orchestration/TraceStore"
 
 export class TraceHook implements Hook {
 	async pre(ctx: ToolContext): Promise<HookResult> {

@@ -1,5 +1,5 @@
 import { TraceHook } from "../TraceHook"
-import * as TraceStore from "../../.orchestration/TraceStore"
+import * as TraceStore from "../../../.orchestration/TraceStore"
 
 describe("TraceHook", () => {
 	it("appends trace entry on post write_file", async () => {

@@ -1,4 +1,4 @@
-import { loadIntents, getIntent } from "../src/.orchestration/IntentStore"
+import { loadIntents, getIntent } from "../.orchestration/IntentStore"
 import fs from "fs"
 import path from "path"
 

@@ -1,5 +1,5 @@
 import { ScopeHook } from "../ScopeHook"
-import * as IntentStore from "../../.orchestration/IntentStore"
+import * as IntentStore from "../../../.orchestration/IntentStore"
 
 describe("ScopeHook", () => {
 	it("allows when path matches intent scope", async () => {

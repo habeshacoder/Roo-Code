@@ -32,11 +32,15 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 	readonly name = "execute_command" as const
 
 	async execute(params: ExecuteCommandParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
+		console.log(
+			`[custom-log][execute_command] START - taskId=${task.taskId}, command="${params.command}", cwd="${params.cwd}"`,
+		)
 		const { command, cwd: customCwd } = params
 		const { handleError, pushToolResult, askApproval } = callbacks
 
 		try {
 			if (!command) {
+				console.log(`[custom-log][execute_command] ERROR: missing command`)
 				task.consecutiveMistakeCount++
 				task.recordToolError("execute_command")
 				pushToolResult(await task.sayAndCreateMissingParamError("execute_command", "command"))
@@ -44,23 +48,31 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 			}
 
 			const canonicalCommand = unescapeHtmlEntities(command)
+			console.log(`[custom-log][execute_command] canonicalCommand="${canonicalCommand}"`)
 
 			const ignoredFileAttemptedToAccess = task.rooIgnoreController?.validateCommand(canonicalCommand)
 
 			if (ignoredFileAttemptedToAccess) {
+				console.log(
+					`[custom-log][execute_command] ACCESS DENIED by rooignore - ${ignoredFileAttemptedToAccess}`,
+				)
 				await task.say("rooignore_error", ignoredFileAttemptedToAccess)
 				pushToolResult(formatResponse.rooIgnoreError(ignoredFileAttemptedToAccess))
 				return
 			}
 
 			task.consecutiveMistakeCount = 0
+			console.log(`[custom-log][execute_command] Validation passed, asking approval...`)
 
 			const didApprove = await askApproval("command", canonicalCommand)
+			console.log(`[custom-log][execute_command] askApproval returned: ${didApprove}`)
 
 			if (!didApprove) {
+				console.log(`[custom-log][execute_command] User DENIED approval - exiting`)
 				return
 			}
 
+			console.log(`[custom-log][execute_command] User APPROVED, preparing terminal execution`)
 			const executionId = task.lastMessageTs?.toString() ?? Date.now().toString()
 			const provider = await task.providerRef.deref()
 			const providerState = await provider?.getState()
@@ -93,15 +105,20 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 				commandExecutionTimeout,
 			}
 
+			console.log(`[custom-log][execute_command] Executing in terminal: options=${JSON.stringify(options)}`)
+
 			try {
 				const [rejected, result] = await executeCommandInTerminal(task, options)
+				console.log(`[custom-log][execute_command] executeCommandInTerminal returned: rejected=${rejected}`)
 
 				if (rejected) {
 					task.didRejectTool = true
 				}
 
 				pushToolResult(result)
+				console.log(`[custom-log][execute_command] pushToolResult called, returning`)
 			} catch (error: unknown) {
+				console.log(`[custom-log][execute_command] ERROR during execution:`, error)
 				const status: CommandExecutionStatus = { executionId, status: "fallback" }
 				provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
 				await task.say("shell_integration_warning")
@@ -127,13 +144,16 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 
 			return
 		} catch (error) {
+			console.log(`[custom-log][execute_command] CATCH ERROR:`, error)
 			await handleError("executing command", error as Error)
 			return
 		}
 	}
 
 	override async handlePartial(task: Task, block: ToolUse<"execute_command">): Promise<void> {
+		console.log(`[custom-log][execute_command][handlePartial] START`)
 		const command = block.params.command
+		console.log(`[custom-log][execute_command][handlePartial] Partial command="${command}"`)
 		await task.ask("command", command ?? "", block.partial).catch(() => {})
 	}
 }
@@ -156,21 +176,28 @@ export async function executeCommandInTerminal(
 		commandExecutionTimeout = 0,
 	}: ExecuteCommandOptions,
 ): Promise<[boolean, ToolResponse]> {
+	console.log(`[custom-log][execute_command][executeCommandInTerminal] START - executionId=${executionId}`)
 	// Convert milliseconds back to seconds for display purposes.
 	const commandExecutionTimeoutSeconds = commandExecutionTimeout / 1000
 	let workingDir: string
 
 	if (!customCwd) {
 		workingDir = task.cwd
+		console.log(`[custom-log][execute_command] Using task.cwd: ${workingDir}`)
 	} else if (path.isAbsolute(customCwd)) {
 		workingDir = customCwd
+		console.log(`[custom-log][execute_command] Using absolute customCwd: ${workingDir}`)
 	} else {
 		workingDir = path.resolve(task.cwd, customCwd)
+		console.log(`[custom-log][execute_command] Resolved relative customCwd to: ${workingDir}`)
 	}
 
+	console.log(`[custom-log][execute_command] Checking working directory exists: ${workingDir}`)
 	try {
 		await fs.access(workingDir)
+		console.log(`[custom-log][execute_command] Directory exists and accessible`)
 	} catch (error) {
+		console.log(`[custom-log][execute_command] Directory access FAILED`)
 		return [false, `Working directory '${workingDir}' does not exist.`]
 	}
 
@@ -238,6 +265,14 @@ export async function executeCommandInTerminal(
 			const status: CommandExecutionStatus = { executionId, status: "output", output: compressedOutput }
 			provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
 
+			// Log sample of output occasionally (first line or every 10th chunk)
+			if (!accumulatedOutput.includes("\n") || accumulatedOutput.split("\n").length % 10 === 0) {
+				const sample = lines.split("\n")[0].substring(0, 100)
+				console.log(
+					`[custom-log][execute_command][onLine] lineCount=${accumulatedOutput.split("\n").length}, sample="${sample}"`,
+				)
+			}
+
 			if (runInBackground || hasAskedForCommandOutput) {
 				return
 			}
@@ -245,6 +280,9 @@ export async function executeCommandInTerminal(
 			// Mark that we've asked to prevent multiple concurrent asks
 			hasAskedForCommandOutput = true
 
+			console.log(
+				`[custom-log][execute_command][onLine] Asking for command output continuation - lineCount=${accumulatedOutput.split("\n").length}`,
+			)
 			try {
 				const { response, text, images } = await task.ask("command_output", "")
 				runInBackground = true
@@ -259,28 +297,38 @@ export async function executeCommandInTerminal(
 		},
 		onCompleted: async (output: string | undefined) => {
 			try {
+				console.log(`[custom-log][execute_command][onCompleted] START - outputLength=${output?.length}`)
 				// Finalize interceptor and get persisted result.
 				// We await finalize() to ensure the artifact file is fully flushed
 				// before we advertise the artifact_id to the LLM.
 				if (interceptor) {
 					persistedResult = await interceptor.finalize()
+					console.log(
+						`[custom-log][execute_command][onCompleted] Interceptor finalized, persisted=${!!persistedResult}`,
+					)
 				}
 
 				// Continue using compressed output for UI display
 				result = Terminal.compressTerminalOutput(output ?? "")
+				console.log(`[custom-log][execute_command][onCompleted] Compressed result length=${result.length}`)
 
 				task.say("command_output", result)
 				completed = true
+				console.log(`[custom-log][execute_command][onCompleted] COMPLETE`)
 			} finally {
 				// Signal that onCompleted has finished, so the main code can safely use persistedResult
 				resolveOnCompleted?.()
 			}
 		},
 		onShellExecutionStarted: (pid: number | undefined) => {
+			console.log(`[custom-log][execute_command][onShellExecutionStarted] pid=${pid}, command="${command}"`)
 			const status: CommandExecutionStatus = { executionId, status: "started", pid, command }
 			provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
 		},
 		onShellExecutionComplete: (details: ExitCodeDetails) => {
+			console.log(
+				`[custom-log][execute_command][onShellExecutionComplete] exitCode=${details.exitCode}, signal=${details.signalName}`,
+			)
 			const status: CommandExecutionStatus = { executionId, status: "exited", exitCode: details.exitCode }
 			provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
 			exitDetails = details
@@ -295,18 +343,23 @@ export async function executeCommandInTerminal(
 	}
 
 	const terminal = await TerminalRegistry.getOrCreateTerminal(workingDir, task.taskId, terminalProvider)
+	console.log(`[custom-log][execute_command] Got terminal instance: provider=${terminalProvider}, isEditing=`)
 
 	if (terminal instanceof Terminal) {
 		terminal.terminal.show(true)
+		console.log(`[custom-log][execute_command] Terminal shown (VSCode terminal)`)
 
 		// Update the working directory in case the terminal we asked for has
 		// a different working directory so that the model will know where the
 		// command actually executed.
 		workingDir = terminal.getCurrentWorkingDirectory()
+		console.log(`[custom-log][execute_command] Terminal actual working dir: ${workingDir.toPosix()}`)
 	}
 
+	console.log(`[custom-log][execute_command] Running command in terminal...`)
 	const process = terminal.runCommand(command, callbacks)
 	task.terminalProcess = process
+	console.log(`[custom-log][execute_command] Command launched, process assigned`)
 
 	// Implement command execution timeout (skip if timeout is 0).
 	if (commandExecutionTimeout > 0) {
@@ -368,10 +421,13 @@ export async function executeCommandInTerminal(
 	// This ensures persistedResult is set before we try to use it, fixing the race
 	// condition where exitDetails is set (sync) before the async onCompleted finishes.
 	if (exitDetails && onCompletedPromise) {
+		console.log(`[custom-log][execute_command] Waiting for onCompletedPromise to resolve...`)
 		await onCompletedPromise
+		console.log(`[custom-log][execute_command] onCompletedPromise resolved, persisted=${!!persistedResult}`)
 	}
 
 	if (message) {
+		console.log(`[custom-log][execute_command] User requested to run in background (message response)`)
 		const { text, images } = message
 		await task.say("user_feedback", text, images)
 
@@ -387,10 +443,12 @@ export async function executeCommandInTerminal(
 			),
 		]
 	} else if (completed || exitDetails) {
+		console.log(`[custom-log][execute_command] Command completed, formatting result`)
 		const currentWorkingDir = terminal.getCurrentWorkingDirectory().toPosix()
 
 		// Use persisted output format when output was truncated and spilled to disk
 		if (persistedResult?.truncated) {
+			console.log(`[custom-log][execute_command] Output was persisted to disk (truncated)`)
 			return [false, formatPersistedOutput(persistedResult, exitDetails, currentWorkingDir)]
 		}
 
@@ -419,11 +477,13 @@ export async function executeCommandInTerminal(
 			exitStatus = `Exit code: <undefined, notify user>`
 		}
 
+		console.log(`[custom-log][execute_command] FINISH - exitStatus="${exitStatus}", resultLength=${result.length}`)
 		return [
 			false,
 			`Command executed in terminal within working directory '${currentWorkingDir}'. ${exitStatus}\nOutput:\n${result}`,
 		]
 	} else {
+		console.log(`[custom-log][execute_command] Command still running (no completion yet)`)
 		return [
 			false,
 			[

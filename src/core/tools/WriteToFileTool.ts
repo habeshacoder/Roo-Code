@@ -27,11 +27,15 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 	readonly name = "write_to_file" as const
 
 	async execute(params: WriteToFileParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
+		console.log(
+			`[custom-log][write_to_file] START - taskId=${task.taskId}, path=${params.path}, contentLength=${params.content?.length}`,
+		)
 		const { pushToolResult, handleError, askApproval } = callbacks
 		const relPath = params.path
 		let newContent = params.content
 
 		if (!relPath) {
+			console.log(`[custom-log][write_to_file] ERROR: missing path`)
 			task.consecutiveMistakeCount++
 			task.recordToolError("write_to_file")
 			pushToolResult(await task.sayAndCreateMissingParamError("write_to_file", "path"))
@@ -50,11 +54,13 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		const accessAllowed = task.rooIgnoreController?.validateAccess(relPath)
 
 		if (!accessAllowed) {
+			console.log(`[custom-log][write_to_file] ACCESS DENIED by rooignore - path=${relPath}`)
 			await task.say("rooignore_error", relPath)
 			pushToolResult(formatResponse.rooIgnoreError(relPath))
 			return
 		}
 
+		console.log(`[custom-log][write_to_file] Validation passed - path=${relPath}`)
 		const isWriteProtected = task.rooProtectedController?.isWriteProtected(relPath) || false
 
 		let fileExists: boolean
@@ -71,7 +77,10 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		// in subsequent operations (e.g., diffViewProvider.open, fs.readFile)
 		if (!fileExists) {
 			await createDirectoriesForFile(absolutePath)
+			console.log(`[custom-log][write_to_file] Created parent directories`)
 		}
+
+		console.log(`[custom-log][write_to_file] fileExists=${fileExists}, absolutePath=${absolutePath}`)
 
 		if (newContent.startsWith("```")) {
 			newContent = newContent.split("\n").slice(1).join("\n")
@@ -128,12 +137,15 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 				} satisfies ClineSayTool)
 
 				const didApprove = await askApproval("tool", completeMessage, undefined, isWriteProtected)
+				console.log(`[custom-log][write_to_file] askApproval returned: ${didApprove}`)
 
 				if (!didApprove) {
 					return
 				}
 
+				console.log(`[custom-log][write_to_file] User APPROVED, calling saveDirectly()`)
 				await task.diffViewProvider.saveDirectly(relPath, newContent, false, diagnosticsEnabled, writeDelayMs)
+				console.log(`[custom-log][write_to_file] saveDirectly completed`)
 			} else {
 				if (!task.diffViewProvider.isEditing) {
 					const partialMessage = JSON.stringify(sharedMessageProps)
@@ -159,23 +171,29 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 					diffStats: computeDiffStats(unified) || undefined,
 				} satisfies ClineSayTool)
 
+				console.log(`[custom-log][write_to_file] Asking approval (standard mode)`)
 				const didApprove = await askApproval("tool", completeMessage, undefined, isWriteProtected)
 
 				if (!didApprove) {
+					console.log(`[custom-log][write_to_file] User DENIED approval, reverting changes`)
 					await task.diffViewProvider.revertChanges()
 					return
 				}
 
+				console.log(`[custom-log][write_to_file] User APPROVED, calling saveChanges()`)
 				await task.diffViewProvider.saveChanges(diagnosticsEnabled, writeDelayMs)
+				console.log(`[custom-log][write_to_file] File saved to disk`)
 			}
 
 			if (relPath) {
 				await task.fileContextTracker.trackFileContext(relPath, "roo_edited" as RecordSource)
+				console.log(`[custom-log][write_to_file] Tracked file context`)
 			}
 
 			task.didEditFile = true
 
 			const message = await task.diffViewProvider.pushToolWriteResult(task, task.cwd, !fileExists)
+			console.log(`[custom-log][write_to_file] pushToolWriteResult returned, pushing result`)
 
 			pushToolResult(message)
 
@@ -184,8 +202,10 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 
 			task.processQueuedMessages()
 
+			console.log(`[custom-log][write_to_file] COMPLETE - returning`)
 			return
 		} catch (error) {
+			console.log(`[custom-log][write_to_file] ERROR caught:`, error)
 			await handleError("writing file", error as Error)
 			await task.diffViewProvider.reset()
 			this.resetPartialState()
@@ -194,14 +214,17 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 	}
 
 	override async handlePartial(task: Task, block: ToolUse<"write_to_file">): Promise<void> {
+		console.log(`[custom-log][write_to_file][handlePartial] START - taskId=${task.taskId}`)
 		const relPath: string | undefined = block.params.path
 		let newContent: string | undefined = block.params.content
 
 		// Wait for path to stabilize before showing UI (prevents truncated paths)
 		if (!this.hasPathStabilized(relPath) || newContent === undefined) {
+			console.log(`[custom-log][write_to_file][handlePartial] Path/content not stabilized yet - returning`)
 			return
 		}
 
+		console.log(`[custom-log][write_to_file][handlePartial] Path stabilized: relPath=${relPath}`)
 		const provider = task.providerRef.deref()
 		const state = await provider?.getState()
 		const isPreventFocusDisruptionEnabled = experiments.isEnabled(
@@ -210,6 +233,7 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		)
 
 		if (isPreventFocusDisruptionEnabled) {
+			console.log(`[custom-log][write_to_file][handlePartial] preventFocusDisruption enabled - skipping partial`)
 			return
 		}
 
@@ -242,17 +266,22 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		}
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
+		console.log(
+			`[custom-log][write_to_file][handlePartial] Sending partial update - isEditing=${task.diffViewProvider.isEditing}`,
+		)
 		await task.ask("tool", partialMessage, block.partial).catch(() => {})
 
 		if (newContent) {
 			if (!task.diffViewProvider.isEditing) {
 				await task.diffViewProvider.open(relPath!)
+				console.log(`[custom-log][write_to_file][handlePartial] Diff opened via handlePartial`)
 			}
 
 			await task.diffViewProvider.update(
 				everyLineHasLineNumbers(newContent) ? stripLineNumbers(newContent) : newContent,
 				false,
 			)
+			console.log(`[custom-log][write_to_file][handlePartial] Diff updated`)
 		}
 	}
 }

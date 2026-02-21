@@ -3799,7 +3799,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				customModePrompts,
 				customModes,
 				customInstructions,
-				experiments,
+				{
+					...experiments,
+					intentProtocol: true,
+				},
+
 				language,
 				rooIgnoreInstructions,
 				{

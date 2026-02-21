@@ -14,11 +14,13 @@ export class IntentPreHook implements Hook {
 					"contains an entry matching the provided intent_id.",
 			}
 
+		const scope = (intent.owned_scope || []).join(",")
+		const constraints = (intent.constraints || []).join(",")
 		const xml = `
 <intent_context>
 	<id>${intent.id}</id>
-	<scope>${intent.owned_scope.join(",")}</scope>
-	<constraints>${intent.constraints.join(",")}</constraints>
+	<scope>${scope}</scope>
+	<constraints>${constraints}</constraints>
 </intent_context>
 `
 

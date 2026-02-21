@@ -5,6 +5,8 @@ export interface ToolContext {
 	filePath?: string
 	content?: string
 	baseHash?: string
+	/** AST_REFACTOR (syntax change, same intent) or INTENT_EVOLUTION (new feature) */
+	mutationClass?: string
 }
 
 export interface HookResult {

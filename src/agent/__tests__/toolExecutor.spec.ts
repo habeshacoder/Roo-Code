@@ -7,10 +7,10 @@ import yaml from "js-yaml"
 // to avoid hitting real file system, we'll use a temp directory for writes
 
 // helper that returns a fresh tmp dir and cleans it up after assertion
-function withTmpDir(fn: (tmp: string) => void | Promise<void>) {
+async function withTmpDir(fn: (tmp: string) => void | Promise<void>) {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tee-"))
 	try {
-		return fn(tmp)
+		return await fn(tmp)
 	} finally {
 		fs.rmSync(tmp, { recursive: true, force: true })
 	}
@@ -23,35 +23,36 @@ describe("toolExecutor intent propagation", () => {
 	})
 
 	it("blocks write_file when no intent has been selected", async () => {
-		await expect(executeTool("write_file", { path: "foo.txt", content: "hi" })).rejects.toThrow(/Missing intent/)
+		await expect(executeTool("write_file", { path: "foo.txt", content: "hi" })).rejects.toThrow(
+			/valid active Intent ID|Missing intent/,
+		)
 	})
 
 	it("automatically attaches active intent to subsequent calls", async () => {
-		// create a fake intents file with one intent
-		withTmpDir((tmp) => {
+		await withTmpDir(async (tmp) => {
 			const orches = path.join(tmp, ".orchestration")
 			fs.mkdirSync(orches, { recursive: true })
-			const yamlContent = yaml.dump({ active_intents: [{ id: "X", owned_scope: ["**/*"] }] })
+			const yamlContent = yaml.dump({
+				active_intents: [{ id: "X", owned_scope: ["**/*"], constraints: [] }],
+			})
 			fs.writeFileSync(path.join(orches, "active_intents.yaml"), yamlContent)
 
-			// mock workspace detection to point at tmp dir
-			vi.mock("../.orchestration/IntentStore", () => {
-				const original = vi.importActual("../.orchestration/IntentStore")
-				return { ...original, workspaceRootOverride: tmp }
-			})
-
-			// select the intent
-			return executeTool("select_active_intent", { intent_id: "X" })
-				.then((res) => {
-					expect(res).toContain("<intent_context")
-					// now attempt write without providing intent_id
-					return executeTool("write_file", { path: path.join(tmp, "a.txt"), content: "hello" })
+			// IntentStore/TraceStore use getWorkspaceRoot() which falls back to process.cwd() when vscode has no workspace
+			const origCwd = process.cwd()
+			process.chdir(tmp)
+			try {
+				const res = await executeTool("select_active_intent", { intent_id: "X" })
+				expect(res).toContain("<intent_context")
+				const writeRes = await executeTool("write_file", {
+					path: path.join(tmp, "a.txt"),
+					content: "hello",
 				})
-				.then((res) => {
-					expect(res.path).toContain("a.txt")
-					const written = fs.readFileSync(path.join(tmp, "a.txt"), "utf8")
-					expect(written).toBe("hello")
-				})
+				expect(writeRes.path).toContain("a.txt")
+				const written = fs.readFileSync(path.join(tmp, "a.txt"), "utf8")
+				expect(written).toBe("hello")
+			} finally {
+				process.chdir(origCwd)
+			}
 		})
 	})
 })

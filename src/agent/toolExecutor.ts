@@ -65,6 +65,11 @@ async function runOriginalTool(toolName: string, args: any): Promise<any> {
 // for all native tool calls.
 let activeIntentId: string | undefined
 
+/** Used by WriteToFileTool to pass intent into hooks when the tool runs outside executeTool. */
+export function getActiveIntentId(): string | undefined {
+	return activeIntentId
+}
+
 export async function executeTool(toolName: string, args: any) {
 	// simple debug output so we can see exactly what tools are invoked
 	console.debug(`[toolExecutor] call: ${toolName}`, args)
@@ -82,6 +87,7 @@ export async function executeTool(toolName: string, args: any) {
 		filePath: args.path,
 		content: args.content,
 		baseHash: args.base_hash,
+		mutationClass: args.mutation_class,
 	}
 
 	const injected = await hookEngine.runPre(ctx)

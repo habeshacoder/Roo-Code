@@ -1,6 +1,8 @@
 import path from "path"
+import crypto from "crypto"
 import delay from "delay"
 import fs from "fs/promises"
+import fsSync from "fs"
 
 import { type ClineSayTool, DEFAULT_WRITE_DELAY_MS } from "@roo-code/types"
 
@@ -15,12 +17,17 @@ import { unescapeHtmlEntities } from "../../utils/text-normalization"
 import { EXPERIMENT_IDS, experiments } from "../../shared/experiments"
 import { convertNewFileToUnifiedDiff, computeDiffStats, sanitizeUnifiedDiff } from "../diff/stats"
 import type { ToolUse } from "../../shared/tools"
+import { getActiveIntentId } from "../../agent/toolExecutor"
+import { hookEngine } from "../../hooks"
 
 import { BaseTool, ToolCallbacks } from "./BaseTool"
 
 interface WriteToFileParams {
 	path: string
 	content: string
+	intent_id?: string
+	base_hash?: string
+	mutation_class?: string
 }
 
 export class WriteToFileTool extends BaseTool<"write_to_file"> {
@@ -81,6 +88,44 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		}
 
 		console.log(`[custom-log][write_to_file] fileExists=${fileExists}, absolutePath=${absolutePath}`)
+
+		// Orchestration: pre-hook (intent gatekeeper, scope, stale file)
+		const intentId = (params as WriteToFileParams).intent_id ?? getActiveIntentId()
+		let baseHash: string | undefined = (params as WriteToFileParams).base_hash
+		if (fileExists && !baseHash) {
+			try {
+				const current = fsSync.readFileSync(absolutePath, "utf8")
+				baseHash = crypto.createHash("sha256").update(current).digest("hex")
+			} catch {
+				// ignore; StaleHook will skip check when baseHash is missing
+			}
+		}
+		const hookCtx: {
+			toolName: "write_to_file"
+			args: WriteToFileParams
+			intentId: string | undefined
+			filePath: string
+			content: string
+			baseHash?: string
+			mutationClass?: string
+		} = {
+			toolName: "write_to_file",
+			args: params,
+			intentId,
+			filePath: relPath,
+			content: newContent,
+			baseHash,
+			mutationClass: (params as WriteToFileParams).mutation_class,
+		}
+		try {
+			await hookEngine.runPre(hookCtx)
+		} catch (hookError) {
+			const msg = hookError instanceof Error ? hookError.message : String(hookError)
+			console.log(`[custom-log][write_to_file] Hook blocked: ${msg}`)
+			pushToolResult(msg)
+			await task.diffViewProvider.reset()
+			return
+		}
 
 		if (newContent.startsWith("```")) {
 			newContent = newContent.split("\n").slice(1).join("\n")
@@ -191,6 +236,12 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 			}
 
 			task.didEditFile = true
+
+			// Orchestration: post-hook (trace logging)
+			hookCtx.content = newContent
+			await hookEngine.runPost(hookCtx, { path: relPath }).catch((err) => {
+				console.warn("[write_to_file] Post-hook (trace) failed:", err)
+			})
 
 			const message = await task.diffViewProvider.pushToolWriteResult(task, task.cwd, !fileExists)
 			console.log(`[custom-log][write_to_file] pushToolWriteResult returned, pushing result`)

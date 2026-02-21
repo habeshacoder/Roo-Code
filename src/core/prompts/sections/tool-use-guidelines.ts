@@ -13,6 +13,6 @@ Example:
 
 1) select_active_intent({ "intent_id": "INT-001" })
 2) wait for '<intent_context>' result
-3) write_file({ "path": "src/foo/bar.ts", "content": "...", "intent_id": "INT-001", "base_hash": "<hash>" })
+3) write_to_file({ "path": "src/foo/bar.ts", "content": "...", "intent_id": "INT-001", "base_hash": "<hash>", "mutation_class": "AST_REFACTOR" })
 By carefully considering the user's response after tool executions, you can react accordingly and make informed decisions about how to proceed with the task. This iterative process helps ensure the overall success and accuracy of your work.`
 }
